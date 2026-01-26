@@ -11,8 +11,13 @@ export async function POST(request) {
     }
 
     try {
-        const body = await request.json();
-        let imapEmail = body.email;
+        let body = {};
+        try {
+            body = await request.json();
+        } catch {
+            // Empty or invalid JSON body - use fallback logic
+        }
+        let imapEmail = body?.email;
 
         // Fallback logic
         if (!imapEmail) {

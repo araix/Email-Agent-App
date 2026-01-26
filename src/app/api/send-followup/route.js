@@ -12,7 +12,12 @@ export async function POST(request) {
     }
 
     try {
-        const body = await request.json();
+        let body = {};
+        try {
+            body = await request.json();
+        } catch {
+            // Empty or invalid JSON body - use defaults
+        }
         const batchSize = body.batchSize || 5;
         const waitDays = body.waitDays !== undefined ? body.waitDays : 2;
         const skipWait = body.skipWait === true;
