@@ -1,20 +1,10 @@
 {
   "name": "email-outreach",
   "version": "1.0.0",
-  "main": "outreach.js",
   "type": "module",
   "scripts": {
-    "init": "node outreach.js init",
-    "send-first": "node outreach.js send-first",
-    "check-responses": "node outreach.js check-responses",
-    "send-second": "node outreach.js send-second",
-    "stats": "node outreach.js stats",
-    "reset": "node outreach.js reset",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "validate": "node scripts/validate.js",
-    "warmup": "node scripts/warmup.js",
-    "verify-setup": "node scripts/test-setup.js",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"

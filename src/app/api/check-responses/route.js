@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import imaps from 'imap-simple';
-import { db, recipients as recipientsTable, getCredential } from '@/lib/db';
+import { db, recipients as recipientsTable, credentials, getCredential } from '@/lib/db';
 import { eq, and, ne, isNull, isNotNull } from 'drizzle-orm';
 import { isAuthenticated } from '@/lib/auth';
 
@@ -16,11 +16,11 @@ export async function POST(request) {
 
         // Fallback logic
         if (!imapEmail) {
-            const warmupCred = await db.select().from(db.credentials).where(eq(db.credentials.type, 'warmup')).limit(1);
+            const warmupCred = await db.select().from(credentials).where(eq(credentials.type, 'warmup')).limit(1);
             if (warmupCred.length > 0) {
                 imapEmail = warmupCred[0].email;
             } else {
-                const anyCred = await db.select().from(db.credentials).limit(1);
+                const anyCred = await db.select().from(credentials).limit(1);
                 if (anyCred.length > 0) imapEmail = anyCred[0].email;
             }
         }

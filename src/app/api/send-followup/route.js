@@ -15,80 +15,70 @@ export async function POST(request) {
         const body = await request.json();
         const batchSize = body.batchSize || 5;
         const waitDays = body.waitDays !== undefined ? body.waitDays : 2;
-        const target = body.target || 'non-responders'; // 'non-responders', 'responders', 'all'
+        const skipWait = body.skipWait === true;
 
-        // 1. Get Sender Credential (Final)
+        // 1. Get Sender Credential
         const finalCreds = await db.select().from(credentials).where(eq(credentials.type, 'final')).limit(1);
-        let senderEmail;
+        const cred = finalCreds[0] || (await db.select().from(credentials).limit(1))[0];
 
-        if (finalCreds.length > 0) {
-            senderEmail = finalCreds[0].email;
-        } else {
-            // Fallback to any
-            const anyCred = await db.select().from(credentials).limit(1);
-            if (anyCred.length > 0) senderEmail = anyCred[0].email;
-        }
-
-        if (!senderEmail) {
+        if (!cred) {
             return NextResponse.json({ error: 'No sender credentials found' }, { status: 500 });
         }
 
-        const cred = finalCreds[0] || (await db.select().from(credentials).where(eq(credentials.email, senderEmail)).limit(1))[0];
+        // 2. Get eligible recipients (first_sent or responded, not bounced, waited enough time)
+        const thresholdDate = new Date(Date.now() - waitDays * 86400 * 1000);
 
-        // 2. Get Template
-        let templateName = (target === 'responders') ? 'secondEmailResponders' : 'secondEmailNonResponders';
-        const templateList = await db.select().from(templates).where(and(eq(templates.name, templateName), eq(templates.active, true))).limit(1);
-        const template = templateList[0];
-
-        if (!template) {
-            return NextResponse.json({ error: `Template "${templateName}" not found or inactive` }, { status: 500 });
-        }
-
-        // 3. Get Recipients
-        const waitSeconds = Math.round(waitDays * 86400);
-        const thresholdDate = new Date(Date.now() - waitSeconds * 1000);
-
-        let recipientsQuery = db.select().from(recipientsTable);
-
-        if (target === 'non-responders') {
-            recipientsQuery = recipientsQuery.where(
-                and(
-                    eq(recipientsTable.status, 'first_sent'),
-                    isNull(recipientsTable.bouncedAt),
-                    lt(recipientsTable.firstEmailSentAt, thresholdDate)
-                )
-            );
-        } else if (target === 'responders') {
-            recipientsQuery = recipientsQuery.where(
-                and(
-                    eq(recipientsTable.status, 'responded'),
-                    isNull(recipientsTable.bouncedAt)
-                )
-            );
-        } else {
-            // all
-            recipientsQuery = recipientsQuery.where(
+        let query = db.select()
+            .from(recipientsTable)
+            .where(
                 and(
                     inArray(recipientsTable.status, ['first_sent', 'responded']),
                     isNull(recipientsTable.bouncedAt),
-                    lt(recipientsTable.firstEmailSentAt, thresholdDate)
+                    ...(skipWait ? [] : [lt(recipientsTable.firstEmailSentAt, thresholdDate)])
                 )
-            );
-        }
+            )
+            .limit(batchSize);
 
-        const recipients = await recipientsQuery.limit(batchSize);
+        const recipients = await query;
 
         if (recipients.length === 0) {
-            return NextResponse.json({ message: `No recipients found for target: ${target}`, sent: 0 }, { status: 200 });
+            return NextResponse.json({ message: 'No eligible recipients found', sent: 0 }, { status: 200 });
         }
 
-        // 4. Send Emails with Threading
+        // 3. Load both templates upfront
+        const templateList = await db.select()
+            .from(templates)
+            .where(
+                and(
+                    inArray(templates.name, ['secondEmailNonResponders', 'secondEmailResponders']),
+                    eq(templates.active, true)
+                )
+            );
+
+        const templateMap = {};
+        for (const t of templateList) {
+            templateMap[t.name] = t;
+        }
+
+        // 4. Send emails based on recipient status
         const transporter = createTransporter(cred);
         let sentCount = 0;
         let failedCount = 0;
         const results = [];
 
         for (const recipient of recipients) {
+            // Pick template based on recipient status
+            const templateName = recipient.status === 'responded' 
+                ? 'secondEmailResponders' 
+                : 'secondEmailNonResponders';
+            
+            const template = templateMap[templateName];
+
+            if (!template) {
+                results.push({ email: recipient.email, status: 'skipped', error: `Template "${templateName}" not found or inactive` });
+                continue;
+            }
+
             try {
                 const vars = {
                     name: recipient.name,
@@ -104,7 +94,7 @@ export async function POST(request) {
                 const bodyContent = replaceTemplateVars(template.body, vars);
 
                 const mailOptions = {
-                    from: `"${vars.senderName}" <${senderEmail}>`,
+                    from: `"${vars.senderName}" <${cred.email}>`,
                     to: recipient.email,
                     subject: subject,
                     text: bodyContent,
@@ -114,7 +104,7 @@ export async function POST(request) {
                     }
                 };
 
-                // Threading magic: In-Reply-To and References
+                // Thread with first email if available
                 if (recipient.firstEmailMessageId) {
                     mailOptions.headers['In-Reply-To'] = recipient.firstEmailMessageId;
                     mailOptions.headers['References'] = recipient.firstEmailMessageId;
@@ -127,12 +117,17 @@ export async function POST(request) {
                 await db.update(recipientsTable)
                     .set({
                         secondEmailSentAt: new Date(),
-                        status: 'second_sent' // Or keep 'responded' if they responded? Logic says second_sent usually implies done with sequence
+                        status: 'second_sent'
                     })
                     .where(eq(recipientsTable.id, recipient.id));
 
                 sentCount++;
-                results.push({ email: recipient.email, status: 'sent', threaded: !!recipient.firstEmailMessageId });
+                results.push({ 
+                    email: recipient.email, 
+                    status: 'sent', 
+                    template: templateName,
+                    threaded: !!recipient.firstEmailMessageId 
+                });
             } catch (error) {
                 console.error(`Failed to send follow-up to ${recipient.email}:`, error);
                 failedCount++;
@@ -141,7 +136,7 @@ export async function POST(request) {
         }
 
         return NextResponse.json({
-            message: 'Follow-up batch processing complete',
+            message: 'Follow-up batch complete',
             sent: sentCount,
             failed: failedCount,
             details: results
