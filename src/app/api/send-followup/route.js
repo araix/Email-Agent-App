@@ -18,7 +18,6 @@ export async function POST(request) {
         } catch {
             // Empty or invalid JSON body - use defaults
         }
-        const batchSize = body.batchSize || 5;
         const waitDays = body.waitDays !== undefined ? body.waitDays : 2;
         const skipWait = body.skipWait === true;
 
@@ -30,10 +29,10 @@ export async function POST(request) {
             return NextResponse.json({ error: 'No sender credentials found' }, { status: 500 });
         }
 
-        // 2. Get eligible recipients (first_sent or responded, not bounced, waited enough time)
+        // 2. Get ONE eligible recipient (single email per cron execution)
         const thresholdDate = new Date(Date.now() - waitDays * 86400 * 1000);
 
-        let query = db.select()
+        const recipients = await db.select()
             .from(recipientsTable)
             .where(
                 and(
@@ -42,109 +41,88 @@ export async function POST(request) {
                     ...(skipWait ? [] : [lt(recipientsTable.firstEmailSentAt, thresholdDate)])
                 )
             )
-            .limit(batchSize);
-
-        const recipients = await query;
+            .limit(1);
 
         if (recipients.length === 0) {
             return NextResponse.json({ message: 'No eligible recipients found', sent: 0 }, { status: 200 });
         }
 
-        // 3. Load both templates upfront
+        const recipient = recipients[0];
+
+        // 3. Get the appropriate template based on recipient status
+        const templateName = recipient.status === 'responded' 
+            ? 'secondEmailResponders' 
+            : 'secondEmailNonResponders';
+
         const templateList = await db.select()
             .from(templates)
             .where(
                 and(
-                    inArray(templates.name, ['secondEmailNonResponders', 'secondEmailResponders']),
+                    eq(templates.name, templateName),
                     eq(templates.active, true)
                 )
-            );
+            )
+            .limit(1);
 
-        const templateMap = {};
-        for (const t of templateList) {
-            templateMap[t.name] = t;
+        const template = templateList[0];
+
+        if (!template) {
+            return NextResponse.json({ 
+                error: `Template "${templateName}" not found or inactive`,
+                email: recipient.email 
+            }, { status: 500 });
         }
 
-        // 4. Send emails based on recipient status
+        // 4. Send email to single recipient
         const transporter = createTransporter(cred);
-        let sentCount = 0;
-        let failedCount = 0;
-        const results = [];
 
-        for (const recipient of recipients) {
-            // Pick template based on recipient status
-            const templateName = recipient.status === 'responded' 
-                ? 'secondEmailResponders' 
-                : 'secondEmailNonResponders';
-            
-            const template = templateMap[templateName];
+        const vars = {
+            name: recipient.name,
+            Name: recipient.name,
+            firstName: recipient.name ? recipient.name.split(' ')[0] : '',
+            email: recipient.email,
+            company: recipient.company || '',
+            senderName: template.senderName || 'Sender',
+            senderCompany: template.senderCompany || ''
+        };
 
-            if (!template) {
-                results.push({ email: recipient.email, status: 'skipped', error: `Template "${templateName}" not found or inactive` });
-                continue;
+        const subject = replaceTemplateVars(template.subject, vars);
+        const bodyContent = replaceTemplateVars(template.body, vars);
+
+        const mailOptions = {
+            from: `"${vars.senderName}" <${cred.email}>`,
+            to: recipient.email,
+            subject: subject,
+            text: bodyContent,
+            headers: {
+                'X-Campaign': 'second-email',
+                'X-Recipient-ID': recipient.id
             }
+        };
 
-            try {
-                const vars = {
-                    name: recipient.name,
-                    Name: recipient.name,
-                    firstName: recipient.name ? recipient.name.split(' ')[0] : '',
-                    email: recipient.email,
-                    company: recipient.company || '',
-                    senderName: template.senderName || 'Sender',
-                    senderCompany: template.senderCompany || ''
-                };
-
-                const subject = replaceTemplateVars(template.subject, vars);
-                const bodyContent = replaceTemplateVars(template.body, vars);
-
-                const mailOptions = {
-                    from: `"${vars.senderName}" <${cred.email}>`,
-                    to: recipient.email,
-                    subject: subject,
-                    text: bodyContent,
-                    headers: {
-                        'X-Campaign': 'second-email',
-                        'X-Recipient-ID': recipient.id
-                    }
-                };
-
-                // Thread with first email if available
-                if (recipient.firstEmailMessageId) {
-                    mailOptions.headers['In-Reply-To'] = recipient.firstEmailMessageId;
-                    mailOptions.headers['References'] = recipient.firstEmailMessageId;
-                }
-
-                await retryWithBackoff(async () => {
-                    return await transporter.sendMail(mailOptions);
-                });
-
-                await db.update(recipientsTable)
-                    .set({
-                        secondEmailSentAt: new Date(),
-                        status: 'second_sent'
-                    })
-                    .where(eq(recipientsTable.id, recipient.id));
-
-                sentCount++;
-                results.push({ 
-                    email: recipient.email, 
-                    status: 'sent', 
-                    template: templateName,
-                    threaded: !!recipient.firstEmailMessageId 
-                });
-            } catch (error) {
-                console.error(`Failed to send follow-up to ${recipient.email}:`, error);
-                failedCount++;
-                results.push({ email: recipient.email, status: 'failed', error: error.message });
-            }
+        // Thread with first email if available
+        if (recipient.firstEmailMessageId) {
+            mailOptions.headers['In-Reply-To'] = recipient.firstEmailMessageId;
+            mailOptions.headers['References'] = recipient.firstEmailMessageId;
         }
+
+        await retryWithBackoff(async () => {
+            return await transporter.sendMail(mailOptions);
+        });
+
+        await db.update(recipientsTable)
+            .set({
+                secondEmailSentAt: new Date(),
+                status: 'second_sent'
+            })
+            .where(eq(recipientsTable.id, recipient.id));
 
         return NextResponse.json({
-            message: 'Follow-up batch complete',
-            sent: sentCount,
-            failed: failedCount,
-            details: results
+            message: 'Follow-up email sent successfully',
+            sent: 1,
+            email: recipient.email,
+            template: templateName,
+            threaded: !!recipient.firstEmailMessageId
         });
 
     } catch (error) {

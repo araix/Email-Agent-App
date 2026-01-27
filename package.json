@@ -9,29 +9,15 @@
     "build": "next build",
     "start": "next start"
   },
-  "keywords": [
-    "email",
-    "outreach",
-    "automation",
-    "gmail"
-  ],
-  "author": "",
-  "license": "ISC",
-  "description": "Email outreach automation system with response tracking",
   "dependencies": {
     "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
     "@libsql/client": "^0.17.0",
     "@tailwindcss/postcss": "^4.1.18",
-    "chalk": "^5.3.0",
-    "cli-progress": "^3.12.0",
     "clsx": "^2.1.1",
-    "commander": "^11.1.0",
-    "csv-parser": "^3.0.0",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",
     "imap-simple": "^5.1.0",
-    "lucide-react": "^0.563.0",
     "next": "^16.1.4",
     "next-themes": "^0.4.6",
     "nodemailer": "^7.0.12",
@@ -42,7 +28,6 @@
     "winston": "^3.11.0"
   },
   "devDependencies": {
-    "autoprefixer": "^10.4.23",
     "drizzle-kit": "^0.31.8",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18"
