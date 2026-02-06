@@ -4,9 +4,12 @@ import { db, recipients as recipientsTable, credentials, getCredential } from '@
 import { eq, and, ne, isNull, isNotNull } from 'drizzle-orm';
 import { isAuthenticated } from '@/lib/auth';
 
+import { env } from '@/lib/env';
+import { LEAD_STATUS } from '@/lib/constants';
+
 export async function POST(request) {
     const authHeader = request.headers.get('x-cron-secret');
-    if (authHeader !== process.env.CRON_SECRET && !(await isAuthenticated())) {
+    if (authHeader !== env.CRON_SECRET && !(await isAuthenticated())) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -39,14 +42,29 @@ export async function POST(request) {
             return NextResponse.json({ error: `IMAP Credential for ${imapEmail} not found or incomplete` }, { status: 400 });
         }
 
+        // Validate IMAP credentials are present
+        const imapUser = cred.imapUser || cred.email;
+        const imapPassword = cred.imapPassword;
+
+        if (!imapUser) {
+            return NextResponse.json({ error: `IMAP user not configured for ${imapEmail}` }, { status: 400 });
+        }
+
+        if (!imapPassword) {
+            return NextResponse.json({ error: `IMAP password not configured for ${imapEmail}` }, { status: 400 });
+        }
+
         const imapConfig = {
             imap: {
-                user: cred.imapUser || cred.user || cred.email,
-                password: cred.imapPassword || cred.appPassword,
+                user: imapUser,
+                password: imapPassword,
                 host: cred.imapHost,
                 port: cred.imapPort || 993,
                 tls: cred.tls !== false,
-                tlsOptions: { rejectUnauthorized: false },
+                // Only disable certificate verification in development
+                tlsOptions: {
+                    rejectUnauthorized: process.env.NODE_ENV === 'production'
+                },
                 authTimeout: cred.authTimeout || 10000
             }
         };
@@ -63,7 +81,7 @@ export async function POST(request) {
             .where(
                 and(
                     isNotNull(recipientsTable.firstEmailMessageId),
-                    ne(recipientsTable.status, 'responded'),
+                    ne(recipientsTable.status, LEAD_STATUS.RESPONDED),
                     isNull(recipientsTable.bouncedAt)
                 )
             );
@@ -88,7 +106,7 @@ export async function POST(request) {
                         const recipient = sentEmails.find(e => e.email.toLowerCase() === bouncedEmail);
                         if (recipient) {
                             await db.update(recipientsTable)
-                                .set({ bouncedAt: new Date(), bounceReason: 'Auto-detected bounce', status: 'bounced' })
+                                .set({ bouncedAt: new Date(), bounceReason: 'Auto-detected bounce', status: LEAD_STATUS.BOUNCED })
                                 .where(eq(recipientsTable.id, recipient.id));
                             bouncesFound++;
                             details.push({ type: 'bounce', email: bouncedEmail });
@@ -117,7 +135,7 @@ export async function POST(request) {
 
                         if (inReplyTo === sentEmail.firstEmailMessageId || (references && references.includes(sentEmail.firstEmailMessageId))) {
                             await db.update(recipientsTable)
-                                .set({ respondedAt: new Date(), responseBody: bodyPart.body.substring(0, 1000), status: 'responded' })
+                                .set({ respondedAt: new Date(), responseBody: bodyPart.body.substring(0, 1000), status: LEAD_STATUS.RESPONDED })
                                 .where(eq(recipientsTable.id, sentEmail.id));
                             responsesFound++;
                             details.push({ type: 'response', email: sentEmail.email });

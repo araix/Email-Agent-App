@@ -1,19 +1,15 @@
 import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import * as schema from '../db/schema.js';
+import { env } from './env.js';
 import { logger } from './logger.js';
-import dotenv from 'dotenv';
 
-dotenv.config();
+const url = env.TURSO_DATABASE_URL;
+const authToken = env.TURSO_AUTH_TOKEN;
 
-const url = process.env.TURSO_DATABASE_URL;
-const authToken = process.env.TURSO_AUTH_TOKEN;
+// Validation is now handled in env.js
 
-if (!url) {
-  logger.warn('TURSO_DATABASE_URL is not defined. Database operations will fail.');
-}
-
-const client = createClient({
+export const client = createClient({
   url: url || 'file:local.db', // Fallback for safety during setup
   authToken: authToken,
 });

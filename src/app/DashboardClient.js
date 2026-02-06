@@ -15,8 +15,11 @@ import {
 } from '@heroicons/react/24/outline';
 import { addLead, importLeads } from './actions';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { LEAD_STATUS } from '@/lib/constants';
 
-export default function DashboardClient({ initialLeads }) {
+export default function DashboardClient({ initialLeads, pagination }) {
+    const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
@@ -85,7 +88,7 @@ export default function DashboardClient({ initialLeads }) {
                     <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
                         Leads Management
                         <span className="text-sm font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 px-3 py-1 rounded-full">
-                            {initialLeads.length} total
+                            {pagination?.total || 0} total
                         </span>
                     </h1>
                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
@@ -131,11 +134,13 @@ export default function DashboardClient({ initialLeads }) {
                                     <td className="whitespace-nowrap px-3 py-5 text-sm text-slate-500 dark:text-slate-400 font-mono">{lead.email}</td>
                                     <td className="whitespace-nowrap px-3 py-5 text-sm text-slate-900 dark:text-white font-medium">{lead.company || '-'}</td>
                                     <td className="whitespace-nowrap px-3 py-5 text-sm">
-                                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider shadow-sm ring-1 ring-inset ${lead.status === 'pending' ? 'bg-amber-100 text-amber-800 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-400' :
-                                            lead.status === 'sent' ? 'bg-blue-100 text-blue-800 ring-blue-600/20 dark:bg-blue-400/10 dark:text-blue-400' :
-                                                'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-400'
+                                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider shadow-sm ring-1 ring-inset ${lead.status === LEAD_STATUS.PENDING ? 'bg-amber-100 text-amber-800 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-400' :
+                                            lead.status === LEAD_STATUS.FIRST_SENT ? 'bg-blue-100 text-blue-800 ring-blue-600/20 dark:bg-blue-400/10 dark:text-blue-400' :
+                                                lead.status === LEAD_STATUS.SECOND_SENT ? 'bg-indigo-100 text-indigo-800 ring-indigo-600/20 dark:bg-indigo-400/10 dark:text-indigo-400' :
+                                                    lead.status === LEAD_STATUS.RESPONDED ? 'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-400' :
+                                                        'bg-red-100 text-red-800 ring-red-600/20 dark:bg-red-400/10 dark:text-red-400'
                                             }`}>
-                                            {lead.status}
+                                            {lead.status.replace('_', ' ')}
                                         </span>
                                     </td>
                                     <td className="whitespace-nowrap px-3 py-5 text-sm text-slate-500 dark:text-slate-400 italic">
@@ -169,11 +174,13 @@ export default function DashboardClient({ initialLeads }) {
                     >
                         <div className="flex justify-between items-start mb-2">
                             <h3 className="font-bold text-slate-900 dark:text-white">{lead.name}</h3>
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ring-1 ring-inset ${lead.status === 'pending' ? 'bg-amber-100 text-amber-800 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-400' :
-                                lead.status === 'sent' ? 'bg-blue-100 text-blue-800 ring-blue-600/20 dark:bg-blue-400/10 dark:text-blue-400' :
-                                    'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-400'
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ring-1 ring-inset ${lead.status === LEAD_STATUS.PENDING ? 'bg-amber-100 text-amber-800 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-400' :
+                                lead.status === LEAD_STATUS.FIRST_SENT ? 'bg-blue-100 text-blue-800 ring-blue-600/20 dark:bg-blue-400/10 dark:text-blue-400' :
+                                    lead.status === LEAD_STATUS.SECOND_SENT ? 'bg-indigo-100 text-indigo-800 ring-indigo-600/20 dark:bg-indigo-400/10 dark:text-indigo-400' :
+                                        lead.status === LEAD_STATUS.RESPONDED ? 'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-400' :
+                                            'bg-red-100 text-red-800 ring-red-600/20 dark:bg-red-400/10 dark:text-red-400'
                                 }`}>
-                                {lead.status}
+                                {lead.status.replace('_', ' ')}
                             </span>
                         </div>
                         <p className="text-sm text-slate-500 dark:text-slate-400 mb-2 font-mono break-all">{lead.email}</p>
@@ -195,6 +202,60 @@ export default function DashboardClient({ initialLeads }) {
                     </div>
                 )}
             </div>
+
+            {/* Pagination Controls */}
+            {pagination && pagination.totalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-slate-200 dark:border-white/10 px-4 py-3 sm:px-6 mt-4">
+                    <div className="flex flex-1 justify-between sm:hidden">
+                        <button
+                            onClick={() => router.push(`/?page=${Math.max(1, pagination.page - 1)}`)}
+                            disabled={pagination.page <= 1}
+                            className="relative inline-flex items-center rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+                        >
+                            Previous
+                        </button>
+                        <button
+                            onClick={() => router.push(`/?page=${Math.min(pagination.totalPages, pagination.page + 1)}`)}
+                            disabled={pagination.page >= pagination.totalPages}
+                            className="relative ml-3 inline-flex items-center rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
+                        >
+                            Next
+                        </button>
+                    </div>
+                    <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                        <div>
+                            <p className="text-sm text-slate-700 dark:text-slate-400">
+                                Showing <span className="font-medium">{(pagination.page - 1) * pagination.limit + 1}</span> to <span className="font-medium">{Math.min(pagination.page * pagination.limit, pagination.total)}</span> of{' '}
+                                <span className="font-medium">{pagination.total}</span> results
+                            </p>
+                        </div>
+                        <div>
+                            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+                                <button
+                                    onClick={() => router.push(`/?page=${Math.max(1, pagination.page - 1)}`)}
+                                    disabled={pagination.page <= 1}
+                                    className="relative inline-flex items-center rounded-l-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-300 dark:ring-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                                >
+                                    <span className="sr-only">Previous</span>
+                                    <ChevronRightIcon className="h-5 w-5 rotate-180" aria-hidden="true" />
+                                </button>
+                                {/* Simple Page X of Y */}
+                                <span className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-slate-900 dark:text-white ring-1 ring-inset ring-slate-300 dark:ring-slate-700 focus:outline-offset-0">
+                                    Page {pagination.page} / {pagination.totalPages}
+                                </span>
+                                <button
+                                    onClick={() => router.push(`/?page=${Math.min(pagination.totalPages, pagination.page + 1)}`)}
+                                    disabled={pagination.page >= pagination.totalPages}
+                                    className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-300 dark:ring-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 focus:z-20 focus:outline-offset-0 disabled:opacity-50"
+                                >
+                                    <span className="sr-only">Next</span>
+                                    <ChevronRightIcon className="h-5 w-5" aria-hidden="true" />
+                                </button>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Add Lead Modal */}
             <Transition.Root show={isOpen} as={Fragment}>

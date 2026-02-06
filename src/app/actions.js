@@ -1,16 +1,40 @@
 'use server';
 
-import { db } from '@/db';
+import { db } from '@/lib/db';
 import { recipients, templates, credentials } from '@/db/schema';
 import { isAuthenticated } from '@/lib/auth';
 import { revalidatePath } from 'next/cache';
-import { sql } from 'drizzle-orm';
+import { sql, eq } from 'drizzle-orm';
+import { validateEmail } from '@/lib/utils';
+import { LEAD_STATUS } from '@/lib/constants';
 
-export async function getLeads() {
+export async function getLeads(page = 1, limit = 50) {
     if (!(await isAuthenticated())) {
         throw new Error('Not authenticated');
     }
-    return await db.select().from(recipients).orderBy(recipients.createdAt);
+
+    const offset = (page - 1) * limit;
+
+    const leads = await db.select()
+        .from(recipients)
+        .orderBy(recipients.createdAt) // Note: Default sorting by Oldest First as per original code, can be changed.
+        .limit(limit)
+        .offset(offset);
+
+    // Get total count for pagination
+    // Ideally use count() function but simple select works for moderate datasets
+    const allLeads = await db.select({ id: recipients.id }).from(recipients);
+    const total = allLeads.length;
+
+    return {
+        leads,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit)
+        }
+    };
 }
 
 export async function getLeadById(id) {
@@ -31,7 +55,7 @@ export async function addLead(name, email, company) {
             name,
             email,
             company,
-            status: 'pending',
+            status: LEAD_STATUS.PENDING,
         });
         revalidatePath('/');
         return { success: true };
@@ -53,15 +77,16 @@ export async function importLeads(text) {
         const parts = line.split(',').map(p => p.trim());
         if (parts.length >= 2) {
             const name = parts[0];
-            const email = parts[1];
+            const email = parts[1].toLowerCase();
             const company = parts[2] || null;
 
-            if (email && email.includes('@')) {
+            // Use proper email validation instead of simple @ check
+            if (validateEmail(email)) {
                 leadsToInsert.push({
                     name,
                     email,
                     company,
-                    status: 'pending'
+                    status: LEAD_STATUS.PENDING
                 });
             } else {
                 errors.push(`Invalid email in line: ${line}`);
@@ -76,19 +101,36 @@ export async function importLeads(text) {
     }
 
     try {
-        // Simple sequential insert to handle conflicts more easily or use onConflictDoUpdate
-        let count = 0;
+        let insertedCount = 0;
+        let skippedCount = 0;
+
         for (const lead of leadsToInsert) {
             try {
-                await db.insert(recipients).values(lead).onConflictDoNothing();
-                count++;
+                // Check if email already exists
+                const existing = await db.select({ id: recipients.id })
+                    .from(recipients)
+                    .where(eq(recipients.email, lead.email))
+                    .limit(1);
+
+                if (existing.length === 0) {
+                    await db.insert(recipients).values(lead);
+                    insertedCount++;
+                } else {
+                    skippedCount++;
+                }
             } catch (e) {
-                // Ignore individual failures (likely duplicates)
+                // Log but continue with other leads
+                console.error(`Failed to insert lead ${lead.email}:`, e.message);
             }
         }
 
         revalidatePath('/');
-        return { success: true, count, total: leadsToInsert.length };
+        return {
+            success: true,
+            count: insertedCount,
+            skipped: skippedCount,
+            total: leadsToInsert.length
+        };
     } catch (error) {
         return { success: false, error: error.message };
     }

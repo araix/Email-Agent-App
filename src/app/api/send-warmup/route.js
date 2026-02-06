@@ -5,9 +5,12 @@ import { retryWithBackoff, replaceTemplateVars } from '@/lib/utils';
 import { eq, and, isNull } from 'drizzle-orm';
 import { isAuthenticated } from '@/lib/auth';
 
+import { env } from '@/lib/env';
+import { LEAD_STATUS } from '@/lib/constants';
+
 export async function POST(request) {
     const authHeader = request.headers.get('x-cron-secret');
-    if (authHeader !== process.env.CRON_SECRET && !(await isAuthenticated())) {
+    if (authHeader !== env.CRON_SECRET && !(await isAuthenticated())) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -43,7 +46,7 @@ export async function POST(request) {
             .from(recipientsTable)
             .where(
                 and(
-                    eq(recipientsTable.status, 'pending'),
+                    eq(recipientsTable.status, LEAD_STATUS.PENDING),
                     isNull(recipientsTable.bouncedAt)
                 )
             )
@@ -88,7 +91,7 @@ export async function POST(request) {
             .set({
                 firstEmailSentAt: new Date(),
                 firstEmailMessageId: info.messageId,
-                status: 'first_sent'
+                status: LEAD_STATUS.FIRST_SENT
             })
             .where(eq(recipientsTable.id, recipient.id));
 

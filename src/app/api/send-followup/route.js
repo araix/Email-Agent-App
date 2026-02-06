@@ -5,9 +5,12 @@ import { retryWithBackoff, replaceTemplateVars } from '@/lib/utils';
 import { eq, and, isNull, lt, inArray } from 'drizzle-orm';
 import { isAuthenticated } from '@/lib/auth';
 
+import { env } from '@/lib/env';
+import { LEAD_STATUS } from '@/lib/constants';
+
 export async function POST(request) {
     const authHeader = request.headers.get('x-cron-secret');
-    if (authHeader !== process.env.CRON_SECRET && !(await isAuthenticated())) {
+    if (authHeader !== env.CRON_SECRET && !(await isAuthenticated())) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -36,7 +39,7 @@ export async function POST(request) {
             .from(recipientsTable)
             .where(
                 and(
-                    inArray(recipientsTable.status, ['first_sent', 'responded']),
+                    inArray(recipientsTable.status, [LEAD_STATUS.FIRST_SENT, LEAD_STATUS.RESPONDED]),
                     isNull(recipientsTable.bouncedAt),
                     ...(skipWait ? [] : [lt(recipientsTable.firstEmailSentAt, thresholdDate)])
                 )
@@ -50,8 +53,8 @@ export async function POST(request) {
         const recipient = recipients[0];
 
         // 3. Get the appropriate template based on recipient status
-        const templateName = recipient.status === 'responded' 
-            ? 'secondEmailResponders' 
+        const templateName = recipient.status === LEAD_STATUS.RESPONDED
+            ? 'secondEmailResponders'
             : 'secondEmailNonResponders';
 
         const templateList = await db.select()
@@ -67,9 +70,9 @@ export async function POST(request) {
         const template = templateList[0];
 
         if (!template) {
-            return NextResponse.json({ 
+            return NextResponse.json({
                 error: `Template "${templateName}" not found or inactive`,
-                email: recipient.email 
+                email: recipient.email
             }, { status: 500 });
         }
 
@@ -106,14 +109,15 @@ export async function POST(request) {
             mailOptions.headers['References'] = recipient.firstEmailMessageId;
         }
 
-        await retryWithBackoff(async () => {
+        const info = await retryWithBackoff(async () => {
             return await transporter.sendMail(mailOptions);
         });
 
         await db.update(recipientsTable)
             .set({
                 secondEmailSentAt: new Date(),
-                status: 'second_sent'
+                secondEmailMessageId: info.messageId,
+                status: LEAD_STATUS.SECOND_SENT
             })
             .where(eq(recipientsTable.id, recipient.id));
 

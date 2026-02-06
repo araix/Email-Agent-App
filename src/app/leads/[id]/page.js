@@ -1,4 +1,4 @@
-import { getLeadById, logoutAction } from '../../actions';
+import { getLeadById } from '../../actions';
 import { isAuthenticated } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
