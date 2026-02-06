@@ -3,37 +3,60 @@ import crypto from 'crypto';
 import { env } from './env';
 
 const SESSION_COOKIE = 'admin_session';
+const ALGORITHM = 'aes-256-cbc';
 
-// In-memory session store (in production, use Redis or database)
-// Note: This will reset on server restart - acceptable for admin dashboard
-const activeSessions = new Map();
+// Generate a deterministic key from the admin password to sign/encrypt sessions
+function getEncryptionKey() {
+    return crypto.createHash('sha256').update(env.ADMIN_PASSWORD).digest();
+}
 
-// Clean expired sessions periodically
-function cleanExpiredSessions() {
-    const now = Date.now();
-    for (const [token, expiresAt] of activeSessions) {
-        if (expiresAt < now) {
-            activeSessions.delete(token);
-        }
+function encrypt(data) {
+    const key = getEncryptionKey();
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+
+    let encrypted = cipher.update(JSON.stringify(data), 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+
+    // Format: iv:encryptedData
+    return `${iv.toString('hex')}:${encrypted}`;
+}
+
+function decrypt(text) {
+    try {
+        const textParts = text.split(':');
+        if (textParts.length !== 2) return null;
+
+        const iv = Buffer.from(textParts[0], 'hex');
+        const encryptedText = textParts[1];
+        const key = getEncryptionKey();
+        const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+
+        return JSON.parse(decrypted);
+    } catch (error) {
+        // If decryption fails (e.g. key changed, invalid data), return null
+        return null;
     }
 }
 
 export async function login(username, password) {
     if (username === env.ADMIN_USERNAME && password === env.ADMIN_PASSWORD) {
-        // Generate cryptographically secure random token
-        const sessionToken = crypto.randomBytes(32).toString('hex');
-        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+        // Create session payload
+        const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
 
-        // Store token with expiration
-        activeSessions.set(sessionToken, expires.getTime());
-        cleanExpiredSessions();
+        // Encrypt session data - stateless, works on Vercel/Serverless
+        const sessionToken = encrypt({ expiresAt });
 
         const cookieStore = await cookies();
         cookieStore.set(SESSION_COOKIE, sessionToken, {
-            expires,
+            expires: new Date(expiresAt),
             httpOnly: true,
             secure: env.IS_PROD,
-            sameSite: 'lax'
+            sameSite: 'lax',
+            path: '/', // Ensure cookie is available on all paths
         });
         return true;
     }
@@ -42,28 +65,26 @@ export async function login(username, password) {
 
 export async function logout() {
     const cookieStore = await cookies();
-    const session = cookieStore.get(SESSION_COOKIE);
-
-    // Remove from active sessions
-    if (session?.value) {
-        activeSessions.delete(session.value);
-    }
-
     cookieStore.delete(SESSION_COOKIE);
 }
 
 export async function isAuthenticated() {
     const cookieStore = await cookies();
-    const session = cookieStore.get(SESSION_COOKIE);
+    const sessionCookie = cookieStore.get(SESSION_COOKIE);
 
-    if (!session?.value) {
+    if (!sessionCookie?.value) {
         return false;
     }
 
-    // Validate token exists and hasn't expired
-    const expiresAt = activeSessions.get(session.value);
-    if (!expiresAt || expiresAt < Date.now()) {
-        activeSessions.delete(session.value);
+    const session = decrypt(sessionCookie.value);
+
+    if (!session || !session.expiresAt) {
+        return false;
+    }
+
+    if (session.expiresAt < Date.now()) {
+        // Token expired
+        cookieStore.delete(SESSION_COOKIE);
         return false;
     }
 
