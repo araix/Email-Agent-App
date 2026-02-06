@@ -111,6 +111,7 @@ export default function TemplateClient({ initialTemplates }) {
     const previewBody = (body) => {
         return body
             .replace(/{{name}}/g, 'John Doe')
+            .replace(/{{company}}/g, 'Acme Corp')
             .replace(/{{senderName}}/g, formData.senderName || 'Your Name')
             .replace(/{{senderCompany}}/g, formData.senderCompany || 'Your Company');
     };
@@ -293,7 +294,7 @@ export default function TemplateClient({ initialTemplates }) {
                                         placeholder="Hi {{name}}, ..."
                                     />
                                     <div className="mt-3 flex flex-wrap gap-2">
-                                        {['name', 'senderName', 'senderCompany'].map(v => (
+                                        {['name', 'company', 'senderName', 'senderCompany'].map(v => (
                                             <span key={v} className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-md">
                                                 {`{{${v}}}`}
                                             </span>
